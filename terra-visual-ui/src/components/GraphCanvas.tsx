@@ -268,7 +268,10 @@ const GraphCanvasInner: React.FC<GraphCanvasProps> = ({
         className="bg-slate-950"
       >
         <Background color="#1e293b" gap={20} size={1.5} />
-        <Controls className="!bg-slate-900 !border-slate-800 !text-slate-200 fill-current shadow-xl" />
+        <Controls
+          position="bottom-left"
+          className="!bg-slate-900 !border-slate-800 !text-slate-200 fill-current shadow-xl !mb-4 !ml-4"
+        />
         <MiniMap
           nodeColor={(node) => {
             const data = node.data as unknown as NodeData;
@@ -278,7 +281,7 @@ const GraphCanvasInner: React.FC<GraphCanvasProps> = ({
             if (data?.driftStatus === 'DESTROY' || data?.driftStatus === 'MISSING_IN_CODE') return '#f43f5e';
             return '#64748b';
           }}
-          className="!bg-slate-900/90 !border-slate-800 !rounded-xl overflow-hidden shadow-xl"
+          className="!bg-slate-900/90 !border-slate-800 !rounded-xl overflow-hidden shadow-xl !mb-4 !mr-4"
           maskColor="rgba(15, 23, 42, 0.7)"
         />
 
@@ -363,9 +366,11 @@ const GraphCanvasInner: React.FC<GraphCanvasProps> = ({
             </button>
           )}
         </Panel>
+      </ReactFlow>
 
-        {/* Legend Panel */}
-        <Panel position="bottom-left" className="bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-800 shadow-xl backdrop-blur flex items-center gap-3 text-[10px] font-mono">
+      {/* Floating Centered Canvas Legend */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+        <div className="bg-slate-900/95 px-3 py-1.5 rounded-xl border border-slate-800 shadow-xl backdrop-blur flex items-center gap-3 text-[10px] font-mono pointer-events-auto">
           <span className="flex items-center gap-1 text-emerald-400">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span> IN_SYNC / CREATE
           </span>
@@ -375,8 +380,8 @@ const GraphCanvasInner: React.FC<GraphCanvasProps> = ({
           <span className="flex items-center gap-1 text-rose-400">
             <span className="w-2 h-2 rounded-full bg-rose-500"></span> DESTROY / DRIFT
           </span>
-        </Panel>
-      </ReactFlow>
+        </div>
+      </div>
 
       {/* Slide-over Resource Inspector Drawer */}
       <InspectorDrawer

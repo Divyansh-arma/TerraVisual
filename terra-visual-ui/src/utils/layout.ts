@@ -24,13 +24,12 @@ interface NodeSize {
 }
 
 /**
- * Calculates a hierarchical compound layout for React Flow subgraphs.
+ * Calculates a dynamic, universal bottom-up bounding box layout for React Flow subgraphs.
  * 
- * Two-pass layout engine:
- * Pass 1: Bottom-up layout of containers from leaf nodes up to root containers:
- *         - AZ Containers: Vertical columns (Public Subnet top y:52, Private Subnet bottom y:160, 370x275)
- *         - VPC Container: IGW at top y:56, AZ columns at y:135, EKS Control Plane & Node Groups at y:440 (840x560)
- * Pass 2: Global Dagre layout of root containers and external resources (S3, DynamoDB at x:900+).
+ * Step A (Leaf Nodes): Resources inside subnets (instances, db, worker nodes) get relative positions inside parent subnet.
+ * Step B (Subnet Containers): Subnets with children dynamically expand bounding boxes (width: max child + 40, height: children * 85 + 75).
+ * Step C (AZ & VPC Root Containers): Dynamic AZ columns and VPC boundaries wrapping all contained subnets, IGW, and EKS nodes.
+ * Step D (Root Layout): Dagre layout executed strictly on top-level root containers (ranksep: 100, nodesep: 80).
  */
 export const getLayoutedElements = (
   nodes: Node<NodeData>[],
@@ -107,7 +106,7 @@ export const getLayoutedElements = (
     };
   };
 
-  // 2. PASS 1: Bottom-up layout of containers from deepest children to top level
+  // 2. PASS 1: Dynamic Bottom-Up Layout from deepest children to top level
   for (let d = maxDepth; d >= 0; d--) {
     nodes.forEach((n) => {
       if (!n?.id || nodeDepths.get(n.id) !== d) return;
@@ -123,11 +122,46 @@ export const getLayoutedElements = (
       }
 
       const resType = n.data?.resourceType || '';
-      const isAZ = resType === 'aws_availability_zone';
-      const isVPC = resType === 'aws_vpc' || resType === 'azurerm_virtual_network' || resType === 'google_compute_network' || n.id === 'vpc-main';
+      const isSubnet = resType === 'aws_subnet' || resType === 'azurerm_subnet';
+      const isAZ = resType === 'aws_availability_zone' || n.id.startsWith('az-');
+      const isVPC =
+        resType === 'aws_vpc' ||
+        resType === 'azurerm_virtual_network' ||
+        resType === 'google_compute_network' ||
+        n.id === 'vpc-main';
 
+      // Step B: Subnet Container containing compute/database resources
+      if (isSubnet) {
+        let currentChildY = 55;
+        const padX = 20;
+        const childW = 220;
+        const childH = 70;
+
+        childIds.forEach((cid) => {
+          const childNode = nodeMap.get(cid);
+          if (!childNode) return;
+
+          childNode.position = { x: padX, y: currentChildY };
+          childNode.extent = 'parent';
+          childNode.style = { ...childNode.style, width: childW, height: childH };
+          nodeMap.set(cid, childNode);
+
+          currentChildY += childH + 15;
+        });
+
+        const subnetW = Math.max(subnetCardWidth, padX * 2 + childW);
+        const subnetH = Math.max(120, currentChildY + 15);
+
+        nodeDimensions.set(n.id, { width: subnetW, height: subnetH });
+        const updatedSubnet = nodeMap.get(n.id)!;
+        updatedSubnet.data = { ...updatedSubnet.data, isContainer: true };
+        updatedSubnet.style = { ...updatedSubnet.style, width: subnetW, height: subnetH };
+        nodeMap.set(n.id, updatedSubnet);
+        return;
+      }
+
+      // Step C1: AZ Container wrapping Subnet columns
       if (isAZ) {
-        // Layout children vertically inside AZ container (Public Subnet on Top, Private Subnet on Bottom)
         const pubSubnets: string[] = [];
         const privSubnets: string[] = [];
         const otherAZChildren: string[] = [];
@@ -149,21 +183,25 @@ export const getLayoutedElements = (
         const ordered = [...pubSubnets, ...privSubnets, ...otherAZChildren];
         let currentY = 52;
         const padX = 20;
+        let maxChildW = subnetCardWidth;
 
         ordered.forEach((cid) => {
           const childNode = nodeMap.get(cid);
           if (!childNode) return;
 
+          const dim = nodeDimensions.get(cid) || { width: subnetCardWidth, height: subnetCardHeight };
+          if (dim.width > maxChildW) maxChildW = dim.width;
+
           childNode.position = { x: padX, y: currentY };
           childNode.extent = 'parent';
-          childNode.style = { ...childNode.style, width: subnetCardWidth, height: subnetCardHeight };
+          childNode.style = { ...childNode.style, width: dim.width, height: dim.height };
           nodeMap.set(cid, childNode);
 
-          currentY += subnetCardHeight + 20;
+          currentY += dim.height + 20;
         });
 
-        const azW = Math.max(minAZWidth, padX * 2 + subnetCardWidth);
-        const azH = Math.max(minAZHeight, currentY + 10);
+        const azW = Math.max(minAZWidth, padX * 2 + maxChildW);
+        const azH = Math.max(minAZHeight, currentY + 15);
         nodeDimensions.set(n.id, { width: azW, height: azH });
 
         const updatedAZ = nodeMap.get(n.id)!;
@@ -172,11 +210,8 @@ export const getLayoutedElements = (
         return;
       }
 
+      // Step C2: VPC Container wrapping IGW, AZ columns, and EKS
       if (isVPC) {
-        // Layout VPC Container:
-        // Tier 1 (y: 56): Internet Gateway (centered at x: 300)
-        // Tier 2 (y: 135): AZ Containers side-by-side (x: 30, x: 435)
-        // Tier 3 (y: 440): EKS Cluster (x: 50) and EKS Node Group (x: 455)
         const igwNodes: string[] = [];
         const azNodes: string[] = [];
         const computeNodes: string[] = [];
@@ -210,8 +245,9 @@ export const getLayoutedElements = (
         // 2. Position AZ Containers side-by-side as vertical columns
         const azPadX = 30;
         const azGapX = 35;
-        let azY = 135;
+        const azY = 135;
         let maxAZH = minAZHeight;
+        let totalAZWidth = azPadX;
 
         azNodes.forEach((cid, idx) => {
           const childNode = nodeMap.get(cid);
@@ -224,11 +260,12 @@ export const getLayoutedElements = (
           childNode.style = { ...childNode.style, width: dim.width, height: dim.height };
           nodeMap.set(cid, childNode);
 
+          totalAZWidth = posX + dim.width + azPadX;
           if (dim.height > maxAZH) maxAZH = dim.height;
         });
 
-        // 3. Position EKS Cluster & Node Group below AZ columns
-        let computeY = azY + maxAZH + 25;
+        // 3. Position EKS Cluster & Node Groups below AZ columns
+        const computeY = azY + maxAZH + 25;
         computeNodes.forEach((cid) => {
           const childNode = nodeMap.get(cid);
           if (!childNode) return;
@@ -243,7 +280,7 @@ export const getLayoutedElements = (
         });
 
         // 4. Position fallback nodes if any
-        let fallbackY = computeY + (computeNodes.length > 0 ? computeCardHeight + 20 : 0);
+        const fallbackY = computeY + (computeNodes.length > 0 ? computeCardHeight + 20 : 0);
         fallbackNodes.forEach((cid, idx) => {
           const childNode = nodeMap.get(cid);
           if (!childNode) return;
@@ -253,8 +290,11 @@ export const getLayoutedElements = (
           nodeMap.set(cid, childNode);
         });
 
-        const totalVPCW = Math.max(minVPCWidth, azPadX * 2 + azNodes.length * (minAZWidth + azGapX));
-        const totalVPCH = Math.max(minVPCHeight, fallbackY + (fallbackNodes.length > 0 ? standardCardHeight + 24 : 30));
+        const totalVPCW = Math.max(minVPCWidth, totalAZWidth);
+        const totalVPCH = Math.max(
+          minVPCHeight,
+          fallbackY + (fallbackNodes.length > 0 ? standardCardHeight + 24 : 30)
+        );
 
         nodeDimensions.set(n.id, { width: totalVPCW, height: totalVPCH });
         const updatedVPC = nodeMap.get(n.id)!;
@@ -266,10 +306,14 @@ export const getLayoutedElements = (
       // Generic container fallback
       let currentX = 24;
       let currentY = 60;
+      let maxChildW = standardCardWidth;
+
       childIds.forEach((cid) => {
         const childNode = nodeMap.get(cid);
         if (!childNode) return;
         const dim = nodeDimensions.get(cid) || getBaseCardSize(childNode);
+        if (dim.width > maxChildW) maxChildW = dim.width;
+
         childNode.position = { x: currentX, y: currentY };
         childNode.extent = 'parent';
         childNode.style = { ...childNode.style, width: dim.width, height: dim.height };
@@ -277,7 +321,7 @@ export const getLayoutedElements = (
         currentY += dim.height + 16;
       });
 
-      const genericW = 380;
+      const genericW = Math.max(380, currentX * 2 + maxChildW);
       const genericH = Math.max(240, currentY + 20);
       nodeDimensions.set(n.id, { width: genericW, height: genericH });
       const updatedContainer = nodeMap.get(n.id)!;
@@ -286,7 +330,7 @@ export const getLayoutedElements = (
     });
   }
 
-  // 3. PASS 2: Global Dagre layout for root nodes (nodes with !parentId)
+  // 3. PASS 2: Global Dagre layout strictly for root nodes (!parentId)
   const rootNodes = nodes.filter((n) => !n?.parentId);
 
   if (rootNodes.length > 0) {
@@ -296,7 +340,7 @@ export const getLayoutedElements = (
       dagreGraph.setGraph({
         rankdir: isHorizontal ? 'LR' : 'TB',
         ranksep: 100, // Explicit vertical spacing
-        nodesep: 80,  // Explicit horizontal spacing
+        nodesep: 80, // Explicit horizontal spacing
       });
 
       rootNodes.forEach((rn) => {
