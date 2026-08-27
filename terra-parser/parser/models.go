@@ -41,6 +41,13 @@ type SecurityIssue struct {
 	Description string `json:"description"`
 }
 
+// AttributeDiff represents a specific attribute divergence between Terraform state and code.
+type AttributeDiff struct {
+	Field      string      `json:"field"`
+	StateValue interface{} `json:"stateValue"`
+	CodeValue  interface{} `json:"codeValue"`
+}
+
 // NodeData contains metadata specific to the infrastructure resource.
 type NodeData struct {
 	Label          string                 `json:"label"`
@@ -52,6 +59,7 @@ type NodeData struct {
 	DriftStatus    string                 `json:"driftStatus"`
 	Attributes     map[string]interface{} `json:"attributes,omitempty"`
 	SecurityIssues []SecurityIssue        `json:"securityIssues,omitempty"`
+	DriftDiffs     []AttributeDiff        `json:"driftDiffs,omitempty"`
 }
 
 // Node represents a React Flow node for canvas rendering.

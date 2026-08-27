@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 
 	"terra-parser/parser"
 )
@@ -17,8 +18,8 @@ const (
 	StatusMissingInCode  = "MISSING_IN_CODE"
 )
 
-// DetectDrift compares the stateGraph against the codeGraph and returns a unified GraphResponse
-// with driftStatus assigned to every resource node and combined dependency edges.
+// DetectDrift compares the stateGraph against the codeGraph using two-pass reconciliation
+// (exact ID match + fuzzy attribute match) and produces granular attribute diffs.
 func DetectDrift(stateGraph *parser.GraphResponse, codeGraph *parser.GraphResponse) *parser.GraphResponse {
 	if stateGraph == nil {
 		stateGraph = &parser.GraphResponse{}
@@ -35,14 +36,6 @@ func DetectDrift(stateGraph *parser.GraphResponse, codeGraph *parser.GraphRespon
 	codeNodeMap := make(map[string]parser.Node)
 	for _, n := range codeGraph.Nodes {
 		codeNodeMap[n.ID] = n
-	}
-
-	allIDs := make(map[string]bool)
-	for id := range stateNodeMap {
-		allIDs[id] = true
-	}
-	for id := range codeNodeMap {
-		allIDs[id] = true
 	}
 
 	// Index dependencies per source resource
@@ -65,50 +58,111 @@ func DetectDrift(stateGraph *parser.GraphResponse, codeGraph *parser.GraphRespon
 		edgeMap[e.ID] = e
 	}
 
-	mergedNodes := make([]parser.Node, 0, len(allIDs))
+	matchedStateIDs := make(map[string]bool)
+	matchedCodeIDs := make(map[string]bool)
 
-	for id := range allIDs {
-		stateNode, inState := stateNodeMap[id]
-		codeNode, inCode := codeNodeMap[id]
+	type MatchedPair struct {
+		StateNode parser.Node
+		CodeNode  parser.Node
+	}
+	var matchedPairs []MatchedPair
 
-		if inCode && !inState {
-			// Resource defined in code but missing from state
+	// Pass 1: Exact ID matching
+	for id, codeNode := range codeNodeMap {
+		if stateNode, ok := stateNodeMap[id]; ok {
+			matchedPairs = append(matchedPairs, MatchedPair{
+				StateNode: stateNode,
+				CodeNode:  codeNode,
+			})
+			matchedStateIDs[id] = true
+			matchedCodeIDs[id] = true
+		}
+	}
+
+	// Pass 2: Fuzzy / Attribute Matching for remaining unmatched nodes
+	for codeID, codeNode := range codeNodeMap {
+		if matchedCodeIDs[codeID] {
+			continue
+		}
+
+		bestMatchStateID := ""
+		for stateID, stateNode := range stateNodeMap {
+			if matchedStateIDs[stateID] {
+				continue
+			}
+
+			if isFuzzyMatch(codeNode, stateNode) {
+				bestMatchStateID = stateID
+				break
+			}
+		}
+
+		if bestMatchStateID != "" {
+			matchedPairs = append(matchedPairs, MatchedPair{
+				StateNode: stateNodeMap[bestMatchStateID],
+				CodeNode:  codeNode,
+			})
+			matchedStateIDs[bestMatchStateID] = true
+			matchedCodeIDs[codeID] = true
+		}
+	}
+
+	mergedNodes := make([]parser.Node, 0, len(stateNodeMap)+len(codeNodeMap))
+
+	// 1. Process all matched pairs (IN_SYNC or MODIFIED)
+	for _, pair := range matchedPairs {
+		stateNode := pair.StateNode
+		codeNode := pair.CodeNode
+
+		diffs := computeAttributeDiffs(stateNode, codeNode)
+		depsDiff := !compareDeps(stateDeps[stateNode.ID], codeDeps[codeNode.ID])
+
+		driftStatus := StatusInSync
+		if len(diffs) > 0 || depsDiff {
+			driftStatus = StatusModified
+		}
+
+		// Merge attributes: copy state attributes, overlay code attributes
+		mergedAttrs := make(map[string]interface{})
+		for k, v := range stateNode.Data.Attributes {
+			mergedAttrs[k] = v
+		}
+		for k, v := range codeNode.Data.Attributes {
+			mergedAttrs[k] = v
+		}
+
+		parentID := codeNode.ParentID
+		if parentID == "" {
+			parentID = stateNode.ParentID
+		}
+
+		mergedNode := codeNode
+		if mergedNode.ID == "" {
+			mergedNode = stateNode
+		}
+		mergedNode.ParentID = parentID
+		mergedNode.Data.Attributes = mergedAttrs
+		mergedNode.Data.DriftStatus = driftStatus
+		mergedNode.Data.DriftDiffs = diffs
+
+		mergedNodes = append(mergedNodes, mergedNode)
+	}
+
+	// 2. Process unmatched code nodes -> MISSING_IN_STATE (Declared in code, unapplied)
+	for codeID, codeNode := range codeNodeMap {
+		if !matchedCodeIDs[codeID] {
 			node := codeNode
 			node.Data.DriftStatus = StatusMissingInState
 			mergedNodes = append(mergedNodes, node)
-		} else if inState && !inCode {
-			// Resource present in state but deleted from code
+		}
+	}
+
+	// 3. Process unmatched state nodes -> MISSING_IN_CODE (Present in state, unmanaged in code)
+	for stateID, stateNode := range stateNodeMap {
+		if !matchedStateIDs[stateID] {
 			node := stateNode
 			node.Data.DriftStatus = StatusMissingInCode
 			mergedNodes = append(mergedNodes, node)
-		} else {
-			// Resource exists in both state and code -> check for modifications
-			isModified := hasDrift(stateNode, codeNode, stateDeps[id], codeDeps[id])
-
-			driftStatus := StatusInSync
-			if isModified {
-				driftStatus = StatusModified
-			}
-
-			// Merge attributes: copy state attributes, overlay code attributes
-			mergedAttrs := make(map[string]interface{})
-			for k, v := range stateNode.Data.Attributes {
-				mergedAttrs[k] = v
-			}
-			for k, v := range codeNode.Data.Attributes {
-				mergedAttrs[k] = v
-			}
-
-			parentID := codeNode.ParentID
-			if parentID == "" {
-				parentID = stateNode.ParentID
-			}
-
-			mergedNode := stateNode
-			mergedNode.ParentID = parentID
-			mergedNode.Data.Attributes = mergedAttrs
-			mergedNode.Data.DriftStatus = driftStatus
-			mergedNodes = append(mergedNodes, mergedNode)
 		}
 	}
 
@@ -146,27 +200,125 @@ func DetectDrift(stateGraph *parser.GraphResponse, codeGraph *parser.GraphRespon
 	}
 }
 
-// hasDrift checks if a resource's attributes or dependencies differ between state and code.
-func hasDrift(stateNode, codeNode parser.Node, stateTargets, codeTargets []string) bool {
-	// 1. Compare dependencies
-	sort.Strings(stateTargets)
-	sort.Strings(codeTargets)
-	if !slicesEqual(stateTargets, codeTargets) {
+// isFuzzyMatch tests if two resources match by resource type and primary architectural identifiers.
+func isFuzzyMatch(a, b parser.Node) bool {
+	// Must share the same resource type or general cloud provider family
+	if a.Data.ResourceType != b.Data.ResourceType {
+		return false
+	}
+
+	rt := strings.ToLower(a.Data.ResourceType)
+	attrsA := a.Data.Attributes
+	attrsB := b.Data.Attributes
+	if attrsA == nil || attrsB == nil {
+		return false
+	}
+
+	// Subnets & VPCs: CIDR match
+	if strings.Contains(rt, "subnet") || strings.Contains(rt, "vpc") {
+		cidrA := getAttrString(attrsA, "cidr_block", "cidr")
+		cidrB := getAttrString(attrsB, "cidr_block", "cidr")
+		if cidrA != "" && cidrA == cidrB {
+			return true
+		}
+	}
+
+	// S3 Buckets: bucket name match
+	if strings.Contains(rt, "s3") || strings.Contains(rt, "bucket") {
+		bucketA := getAttrString(attrsA, "bucket", "bucket_name")
+		bucketB := getAttrString(attrsB, "bucket", "bucket_name")
+		if bucketA != "" && bucketA == bucketB {
+			return true
+		}
+	}
+
+	// DynamoDB Tables: table name match
+	if strings.Contains(rt, "dynamo") || strings.Contains(rt, "table") {
+		tableA := getAttrString(attrsA, "name", "table_name")
+		tableB := getAttrString(attrsB, "name", "table_name")
+		if tableA != "" && tableA == tableB {
+			return true
+		}
+	}
+
+	// EKS Clusters: cluster name match
+	if strings.Contains(rt, "eks") || strings.Contains(rt, "cluster") {
+		nameA := getAttrString(attrsA, "name", "cluster_name")
+		nameB := getAttrString(attrsB, "name", "cluster_name")
+		if nameA != "" && nameA == nameB {
+			return true
+		}
+	}
+
+	// Fallback Name Tag Match
+	nameTagA := getNameTag(attrsA)
+	nameTagB := getNameTag(attrsB)
+	if nameTagA != "" && nameTagA == nameTagB {
 		return true
 	}
 
-	// 2. Compare declared code attributes against state attributes
+	return false
+}
+
+// computeAttributeDiffs calculates attribute divergence between state and code.
+func computeAttributeDiffs(stateNode, codeNode parser.Node) []parser.AttributeDiff {
+	var diffs []parser.AttributeDiff
+
 	for key, codeVal := range codeNode.Data.Attributes {
+		// Skip internal metadata keys
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
+
 		stateVal, exists := stateNode.Data.Attributes[key]
 		if !exists {
-			return true
+			diffs = append(diffs, parser.AttributeDiff{
+				Field:      key,
+				StateValue: "<missing>",
+				CodeValue:  codeVal,
+			})
+			continue
 		}
+
 		if !attributesEqual(codeVal, stateVal) {
-			return true
+			diffs = append(diffs, parser.AttributeDiff{
+				Field:      key,
+				StateValue: stateVal,
+				CodeValue:  codeVal,
+			})
 		}
 	}
 
-	return false
+	return diffs
+}
+
+func compareDeps(stateTargets, codeTargets []string) bool {
+	sort.Strings(stateTargets)
+	sort.Strings(codeTargets)
+	return slicesEqual(stateTargets, codeTargets)
+}
+
+func getAttrString(attrs map[string]interface{}, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := attrs[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func getNameTag(attrs map[string]interface{}) string {
+	if tags, ok := attrs["tags"].(map[string]interface{}); ok {
+		if name, ok := tags["Name"].(string); ok {
+			return name
+		}
+	}
+	if tagsAll, ok := attrs["tags_all"].(map[string]interface{}); ok {
+		if name, ok := tagsAll["Name"].(string); ok {
+			return name
+		}
+	}
+	return ""
 }
 
 func slicesEqual(a, b []string) bool {

@@ -118,3 +118,68 @@ func TestDetectDriftDependencyMismatch(t *testing.T) {
 		t.Errorf("expected 2 merged edges, got %d", len(merged.Edges))
 	}
 }
+
+func TestFuzzyMatchDriftAndAttributeDiffs(t *testing.T) {
+	// Subnet with different ID (module vs root) but identical CIDR should fuzzy match
+	stateGraph := &parser.GraphResponse{
+		Nodes: []parser.Node{
+			{
+				ID:   "module.vpc.aws_subnet.this[0]",
+				Type: "infrastructureNode",
+				Data: parser.NodeData{
+					Label:        "public_subnet",
+					ResourceType: "aws_subnet",
+					Attributes: map[string]interface{}{
+						"cidr_block":        "10.0.10.0/24",
+						"availability_zone": "us-east-1a",
+					},
+				},
+			},
+		},
+	}
+
+	codeGraph := &parser.GraphResponse{
+		Nodes: []parser.Node{
+			{
+				ID:   "aws_subnet.public_a",
+				Type: "infrastructureNode",
+				Data: parser.NodeData{
+					Label:        "Public Subnet A",
+					ResourceType: "aws_subnet",
+					Attributes: map[string]interface{}{
+						"cidr_block":        "10.0.10.0/24",
+						"availability_zone": "us-east-1b", // changed from 1a to 1b
+					},
+				},
+			},
+		},
+	}
+
+	merged := DetectDrift(stateGraph, codeGraph)
+	if len(merged.Nodes) != 1 {
+		t.Fatalf("expected 1 fuzzy matched node, got %d", len(merged.Nodes))
+	}
+
+	node := merged.Nodes[0]
+	if node.Data.DriftStatus != StatusModified {
+		t.Errorf("expected StatusModified, got %s", node.Data.DriftStatus)
+	}
+
+	if len(node.Data.DriftDiffs) == 0 {
+		t.Fatalf("expected DriftDiffs to contain attribute differences")
+	}
+
+	foundAZDiff := false
+	for _, diff := range node.Data.DriftDiffs {
+		if diff.Field == "availability_zone" {
+			foundAZDiff = true
+			if diff.StateValue != "us-east-1a" || diff.CodeValue != "us-east-1b" {
+				t.Errorf("unexpected diff values: state=%v, code=%v", diff.StateValue, diff.CodeValue)
+			}
+		}
+	}
+
+	if !foundAZDiff {
+		t.Errorf("expected availability_zone diff, got %+v", node.Data.DriftDiffs)
+	}
+}
