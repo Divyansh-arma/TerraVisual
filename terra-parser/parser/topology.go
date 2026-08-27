@@ -12,6 +12,9 @@ func ApplyAWSTopology(nodeMap map[string]Node, edgeMap map[string]Edge) (map[str
 		return nodeMap, edgeMap
 	}
 
+	// 0. Perform Semantic Module Decomposition for standard AWS modules (VPC, EKS, S3, DynamoDB)
+	nodeMap, edgeMap = DecomposeSemanticModules(nodeMap, edgeMap)
+
 	// 1. Build lookup tables for VPCs and Subnets
 	vpcLookup := make(map[string]string)    // raw reference / id -> canonical VPC node ID
 	subnetLookup := make(map[string]string) // raw reference / id -> canonical Subnet node ID
@@ -150,8 +153,8 @@ func ApplyAWSTopology(nodeMap map[string]Node, edgeMap map[string]Edge) (map[str
 			continue
 		}
 
-		// If resource has no specific subnet but has vpc_id (e.g. Internet Gateway, Route Table, Security Group, ALB)
-		if n.ParentID == "" || strings.HasPrefix(n.ParentID, "module.") {
+		// If resource has no specific subnet and is not already nested in a module, but has vpc_id (e.g. Internet Gateway, Route Table, Security Group, ALB)
+		if n.ParentID == "" {
 			if vpcIDVal, ok := attrs["vpc_id"].(string); ok && vpcIDVal != "" {
 				matchedVPCID := resolveTargetFromLookup(vpcIDVal, vpcLookup)
 				if matchedVPCID != "" {
@@ -179,6 +182,283 @@ func ApplyAWSTopology(nodeMap map[string]Node, edgeMap map[string]Edge) (map[str
 	}
 
 	return nodeMap, edgeMap
+}
+
+// ExpandSemanticAWSModules unpacks official AWS modules (e.g. terraform-aws-modules/vpc/aws, terraform-aws-modules/eks/aws)
+// into their semantic child resources when remote definitions don't provide child .tf files.
+func ExpandSemanticAWSModules(nodeMap map[string]Node, edgeMap map[string]Edge) (map[string]Node, map[string]Edge) {
+	// Find any VPC node already created
+	var defaultVPCNodeID string
+	for id, n := range nodeMap {
+		if n.Data.ResourceType == "aws_vpc" {
+			defaultVPCNodeID = id
+			break
+		}
+	}
+
+	createdSubnets := make([]string, 0)
+	createdPrivateSubnets := make([]string, 0)
+
+	for id, n := range nodeMap {
+		if n.Data.ResourceType != "module" {
+			continue
+		}
+
+		attrs := n.Data.Attributes
+		if attrs == nil {
+			continue
+		}
+
+		src, _ := attrs["source"].(string)
+		modName := strings.TrimPrefix(id, "module.")
+
+		// 1. Expand terraform-aws-modules/vpc/aws
+		if strings.Contains(src, "aws-modules/vpc") || strings.Contains(src, "terraform-aws-modules/vpc") {
+			// Check if child VPC already exists
+			hasChildVPC := false
+			for _, child := range nodeMap {
+				if child.ParentID == id && child.Data.ResourceType == "aws_vpc" {
+					hasChildVPC = true
+					break
+				}
+			}
+
+			vpcID := fmt.Sprintf("module.%s.aws_vpc.this", modName)
+			if !hasChildVPC {
+				cidr := "10.0.0.0/16"
+				if c, ok := attrs["cidr"].(string); ok && c != "" {
+					cidr = c
+				} else if c, ok := attrs["cidr_block"].(string); ok && c != "" {
+					cidr = c
+				}
+
+				nodeMap[vpcID] = Node{
+					ID:   vpcID,
+					Type: "infrastructureNode",
+					Position: Position{
+						X: 0,
+						Y: 0,
+					},
+					Data: NodeData{
+						Label:        fmt.Sprintf("%s-vpc", modName),
+						Provider:     "aws",
+						ResourceType: "aws_vpc",
+						Module:       id,
+						IsContainer:  true,
+						DriftStatus:  "IN_SYNC",
+						Attributes: map[string]interface{}{
+							"cidr_block": cidr,
+						},
+					},
+					ParentID: id,
+				}
+				defaultVPCNodeID = vpcID
+			} else {
+				vpcID = defaultVPCNodeID
+			}
+
+			// Extract AZs
+			azs := extractStringList(attrs["azs"])
+			if len(azs) == 0 {
+				azs = []string{"us-east-1a", "us-east-1b", "us-east-1c"}
+			}
+
+			// Generate Public Subnets
+			publicSubnets := extractStringList(attrs["public_subnets"])
+			for i, subCIDR := range publicSubnets {
+				subID := fmt.Sprintf("module.%s.aws_subnet.public_%d", modName, i+1)
+				az := azs[i%len(azs)]
+				if _, exists := nodeMap[subID]; !exists {
+					nodeMap[subID] = Node{
+						ID:   subID,
+						Type: "infrastructureNode",
+						Position: Position{
+							X: 0,
+							Y: 0,
+						},
+						Data: NodeData{
+							Label:        fmt.Sprintf("%s-public-%d", modName, i+1),
+							Provider:     "aws",
+							ResourceType: "aws_subnet",
+							Module:       id,
+							IsContainer:  false,
+							DriftStatus:  "IN_SYNC",
+							Attributes: map[string]interface{}{
+								"cidr_block":        subCIDR,
+								"subnet_type":       "public",
+								"availability_zone": az,
+								"vpc_id":            vpcID,
+							},
+						},
+						ParentID: vpcID,
+					}
+					createdSubnets = append(createdSubnets, subID)
+				}
+			}
+
+			// Generate Private Subnets
+			privateSubnets := extractStringList(attrs["private_subnets"])
+			for i, subCIDR := range privateSubnets {
+				subID := fmt.Sprintf("module.%s.aws_subnet.private_%d", modName, i+1)
+				az := azs[i%len(azs)]
+				if _, exists := nodeMap[subID]; !exists {
+					nodeMap[subID] = Node{
+						ID:   subID,
+						Type: "infrastructureNode",
+						Position: Position{
+							X: 0,
+							Y: 0,
+						},
+						Data: NodeData{
+							Label:        fmt.Sprintf("%s-private-%d", modName, i+1),
+							Provider:     "aws",
+							ResourceType: "aws_subnet",
+							Module:       id,
+							IsContainer:  false,
+							DriftStatus:  "IN_SYNC",
+							Attributes: map[string]interface{}{
+								"cidr_block":        subCIDR,
+								"subnet_type":       "private",
+								"availability_zone": az,
+								"vpc_id":            vpcID,
+							},
+						},
+						ParentID: vpcID,
+					}
+					createdSubnets = append(createdSubnets, subID)
+					createdPrivateSubnets = append(createdPrivateSubnets, subID)
+				}
+			}
+
+			n.Data.IsContainer = true
+			nodeMap[id] = n
+		}
+
+		// 2. Expand terraform-aws-modules/eks/aws
+		if strings.Contains(src, "aws-modules/eks") || strings.Contains(src, "terraform-aws-modules/eks") {
+			clusterName := fmt.Sprintf("%s-cluster", modName)
+			if cn, ok := attrs["cluster_name"].(string); ok && cn != "" {
+				clusterName = cn
+			}
+
+			clusterID := fmt.Sprintf("module.%s.aws_eks_cluster.this", modName)
+			ngID := fmt.Sprintf("module.%s.aws_eks_node_group.this", modName)
+
+			// Determine parent container for EKS (place inside VPC container if available, or inside module)
+			targetParent := id
+			if defaultVPCNodeID != "" {
+				targetParent = defaultVPCNodeID
+			}
+
+			if _, exists := nodeMap[clusterID]; !exists {
+				nodeMap[clusterID] = Node{
+					ID:   clusterID,
+					Type: "infrastructureNode",
+					Position: Position{
+						X: 0,
+						Y: 0,
+					},
+					Data: NodeData{
+						Label:        clusterName,
+						Provider:     "aws",
+						ResourceType: "aws_eks_cluster",
+						Module:       id,
+						IsContainer:  false,
+						DriftStatus:  "IN_SYNC",
+						Attributes: map[string]interface{}{
+							"cluster_name": clusterName,
+							"vpc_id":       defaultVPCNodeID,
+						},
+					},
+					ParentID: targetParent,
+				}
+			}
+
+			if _, exists := nodeMap[ngID]; !exists {
+				nodeMap[ngID] = Node{
+					ID:   ngID,
+					Type: "infrastructureNode",
+					Position: Position{
+						X: 0,
+						Y: 0,
+					},
+					Data: NodeData{
+						Label:        fmt.Sprintf("%s-nodegroup", clusterName),
+						Provider:     "aws",
+						ResourceType: "aws_eks_node_group",
+						Module:       id,
+						IsContainer:  false,
+						DriftStatus:  "IN_SYNC",
+						Attributes: map[string]interface{}{
+							"cluster_name": clusterName,
+						},
+					},
+					ParentID: targetParent,
+				}
+
+				// Connect node group -> EKS cluster
+				edgeID := fmt.Sprintf("e-%s-%s", ngID, clusterID)
+				edgeMap[edgeID] = Edge{
+					ID:       edgeID,
+					Source:   ngID,
+					Target:   clusterID,
+					Type:     "smoothstep",
+					Animated: true,
+				}
+			}
+
+			// Connect private subnets to EKS cluster
+			subnetsToConnect := createdPrivateSubnets
+			if len(subnetsToConnect) == 0 {
+				subnetsToConnect = createdSubnets
+			}
+			for _, subID := range subnetsToConnect {
+				edgeID := fmt.Sprintf("e-%s-%s", subID, clusterID)
+				edgeMap[edgeID] = Edge{
+					ID:       edgeID,
+					Source:   subID,
+					Target:   clusterID,
+					Type:     "smoothstep",
+					Animated: true,
+				}
+			}
+
+			n.Data.IsContainer = true
+			nodeMap[id] = n
+		}
+	}
+
+	return nodeMap, edgeMap
+}
+
+func extractStringList(val interface{}) []string {
+	if val == nil {
+		return nil
+	}
+	var res []string
+	switch v := val.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				res = append(res, s)
+			}
+		}
+	case []string:
+		return v
+	case string:
+		// e.g. ["10.0.1.0/24", "10.0.2.0/24"] or comma-separated
+		trimmed := strings.Trim(v, "[] \t\n\r")
+		if trimmed != "" {
+			parts := strings.Split(trimmed, ",")
+			for _, p := range parts {
+				cleanP := strings.Trim(p, "\"' \t\n\r")
+				if cleanP != "" {
+					res = append(res, cleanP)
+				}
+			}
+		}
+	}
+	return res
 }
 
 func resolveTargetFromLookup(val string, lookup map[string]string) string {

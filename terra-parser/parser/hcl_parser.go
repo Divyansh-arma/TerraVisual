@@ -33,6 +33,9 @@ func ParseHCLDirectory(dirPath string) (*GraphResponse, error) {
 		return nil, fmt.Errorf("failed to scan directories in %s: %w", dirPath, dirErr)
 	}
 
+	// 1.5. Ingest terraform.tfvars and default variable values
+	tfVars, _ := CollectAndParseTFVars(absRootDir)
+
 	if len(tfFilesByDir) == 0 {
 		return &GraphResponse{
 			Nodes: []Node{},
@@ -196,6 +199,11 @@ func ParseHCLDirectory(dirPath string) (*GraphResponse, error) {
 				} else if block.Type == "module" && len(block.Labels) == 1 && currentDir != absRootDir {
 					// Submodule within a submodule
 					modName := block.Labels[0]
+					// Flatten wrapper: avoid creating duplicate wrapper if name matches parent module
+					if modName == strings.TrimPrefix(currentModule, "module.") {
+						continue
+					}
+
 					nodeID := fmt.Sprintf("%s.module.%s", currentModule, modName)
 					attributes := extractBlockAttributes(block.Body)
 
@@ -263,6 +271,9 @@ func ParseHCLDirectory(dirPath string) (*GraphResponse, error) {
 			_ = hclsyntax.Walk(bc.block.Body, walker)
 		}
 	}
+
+	// Unroll modular architectures into visual VPC containers and subnets
+	nodeMap, edgeMap = UnrollModularArchitecture(nodeMap, edgeMap, tfVars)
 
 	// Apply AWS Architecture Hierarchy Topology (VPC -> AZ -> Subnet -> Resource)
 	nodeMap, edgeMap = ApplyAWSTopology(nodeMap, edgeMap)

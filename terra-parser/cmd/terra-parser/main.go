@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"terra-parser/drift"
 	"terra-parser/hclsync"
@@ -14,11 +15,13 @@ import (
 func main() {
 	var statePath string
 	var codePath string
+	var planPath string
 	var syncPath string
 	var noSecurity bool
 
 	flag.StringVar(&statePath, "state", "", "Path to terraform.tfstate file")
 	flag.StringVar(&codePath, "code", "", "Path to Terraform HCL directory (.tf files)")
+	flag.StringVar(&planPath, "plan", "", "Path to terraform plan JSON file (tfplan.json)")
 	flag.StringVar(&syncPath, "sync", "", "Path to Terraform HCL directory to sync incoming Graph JSON to")
 	flag.BoolVar(&noSecurity, "no-security", false, "Disable automated local security scanning")
 	flag.Parse()
@@ -33,6 +36,18 @@ func main() {
 			os.Exit(1)
 		}
 		output, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(output))
+		return
+	}
+
+	// Mode 2: Plan Mode via --plan flag
+	if planPath != "" {
+		graph, err := parser.ParseTFPlanFile(planPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing plan file %s: %v\n", planPath, err)
+			os.Exit(1)
+		}
+		output, _ := json.MarshalIndent(graph, "", "  ")
 		fmt.Println(string(output))
 		return
 	}
@@ -61,7 +76,7 @@ func main() {
 	var scanTargetDir string
 
 	if statePath != "" && codePath != "" {
-		// Mode 2: Drift detection mode
+		// Mode 3: Drift detection mode
 		stateGraph, sErr := parser.ParseTFStateFile(statePath)
 		if sErr != nil {
 			fmt.Fprintf(os.Stderr, "Error parsing state file %s: %v\n", statePath, sErr)
@@ -92,18 +107,29 @@ func main() {
 			}
 			scanTargetDir = inputPath
 		} else {
-			graph, err = parser.ParseTFStateFile(inputPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing tfstate file %s: %v\n", inputPath, err)
-				os.Exit(1)
+			// Auto-detect Plan file vs State file
+			rawBytes, readErr := os.ReadFile(inputPath)
+			if readErr == nil && (strings.Contains(string(rawBytes), "\"resource_changes\"") || strings.Contains(inputPath, "plan")) {
+				graph, err = parser.ParseTFPlanFile(inputPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing plan file %s: %v\n", inputPath, err)
+					os.Exit(1)
+				}
+			} else {
+				graph, err = parser.ParseTFStateFile(inputPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing tfstate file %s: %v\n", inputPath, err)
+					os.Exit(1)
+				}
 			}
 		}
 	} else {
-		// Mode 3: Read tfstate from stdin
+		// Mode 4: Read from stdin
 		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) != 0 && len(args) == 0 && statePath == "" && codePath == "" && syncPath == "" {
+		if (stat.Mode() & os.ModeCharDevice) != 0 && len(args) == 0 && statePath == "" && codePath == "" && syncPath == "" && planPath == "" {
 			fmt.Fprintf(os.Stderr, "Usage:\n")
-			fmt.Fprintf(os.Stderr, "  Single target: terra-parser <directory-or-tfstate-file>\n")
+			fmt.Fprintf(os.Stderr, "  Single target: terra-parser <directory-or-tfstate-file-or-tfplan.json>\n")
+			fmt.Fprintf(os.Stderr, "  Plan mode:     terra-parser --plan <tfplan.json>\n")
 			fmt.Fprintf(os.Stderr, "  Drift mode:    terra-parser --state <tfstate-file> --code <hcl-dir>\n")
 			fmt.Fprintf(os.Stderr, "                 terra-parser <tfstate-file> <hcl-dir>\n")
 			fmt.Fprintf(os.Stderr, "  Sync mode:     terra-parser --sync <hcl-dir> (pipes graph JSON via stdin)\n")

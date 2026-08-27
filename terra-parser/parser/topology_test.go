@@ -164,3 +164,77 @@ resource "aws_internet_gateway" "gw" {
 		t.Errorf("Topological hierarchy order violated: VPC(idx %d) < AZ(idx %d) < Subnet(idx %d) < EC2(idx %d)", vpcIdx, azIdx, subIdx, ec2Idx)
 	}
 }
+
+func TestSemanticModuleExpansion(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	hclContent := `
+module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+  cidr   = "10.0.0.0/16"
+  azs    = ["us-east-1a", "us-east-1b"]
+  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
+  private_subnets = ["10.0.10.0/24", "10.0.20.0/24"]
+}
+
+module "eks" {
+  source          = "terraform-aws-modules/eks/aws"
+  cluster_name    = "prod-eks"
+  cluster_version = "1.29"
+  vpc_id          = module.vpc.vpc_id
+  subnet_ids      = module.vpc.private_subnets
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.tf"), []byte(hclContent), 0644); err != nil {
+		t.Fatalf("Failed to write main.tf: %v", err)
+	}
+
+	graph, err := ParseHCLDirectory(tmpDir)
+	if err != nil {
+		t.Fatalf("ParseHCLDirectory failed: %v", err)
+	}
+
+	nodeMap := make(map[string]Node)
+	for _, n := range graph.Nodes {
+		nodeMap[n.ID] = n
+	}
+
+	// Verify VPC and subnets expanded
+	if vpcNode, ok := nodeMap["vpc-main"]; !ok {
+		t.Errorf("Expected VPC container 'vpc-main' to be created")
+	} else {
+		if vpcNode.Data.ResourceType != "aws_vpc" {
+			t.Errorf("Expected vpc-main to have ResourceType=aws_vpc, got %s", vpcNode.Data.ResourceType)
+		}
+	}
+
+	if _, ok := nodeMap["subnet-pub-1"]; !ok {
+		t.Errorf("Expected public subnet-pub-1 to be created")
+	}
+
+	if _, ok := nodeMap["subnet-priv-1"]; !ok {
+		t.Errorf("Expected private subnet-priv-1 to be created")
+	}
+
+	// Verify EKS cluster and node group expanded
+	if _, ok := nodeMap["aws_eks_cluster"]; !ok {
+		t.Errorf("Expected EKS cluster 'aws_eks_cluster' to be created")
+	}
+
+	if _, ok := nodeMap["aws_eks_node_group"]; !ok {
+		t.Errorf("Expected EKS node group 'aws_eks_node_group' to be created")
+	}
+
+	// Verify edges created between subnets / node group and EKS cluster
+	hasEksEdge := false
+	for _, e := range graph.Edges {
+		if e.Target == "aws_eks_cluster" {
+			hasEksEdge = true
+			break
+		}
+	}
+
+	if !hasEksEdge {
+		t.Errorf("Expected dependency edge targeting aws_eks_cluster")
+	}
+}

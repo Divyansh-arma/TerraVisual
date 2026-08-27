@@ -1,0 +1,174 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "resource_changes": [
+    {
+      "address": "aws_vpc.production",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "production",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "cidr_block": "10.0.0.0/16",
+          "enable_dns_hostnames": true,
+          "tags": { "Name": "Production VPC" }
+        }
+      }
+    },
+    {
+      "address": "aws_subnet.public_1",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "public_1",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "availability_zone": "us-east-1a",
+          "cidr_block": "10.0.1.0/24",
+          "vpc_id": "aws_vpc.production",
+          "tags": { "Name": "Public Subnet 1a" }
+        }
+      }
+    },
+    {
+      "address": "aws_subnet.private_1",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "private_1",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "availability_zone": "us-east-1a",
+          "cidr_block": "10.0.3.0/24",
+          "vpc_id": "aws_vpc.production",
+          "tags": { "Name": "Private Subnet 1a" }
+        }
+      }
+    },
+    {
+      "address": "aws_subnet.public_2",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "public_2",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "cidr_block": "10.0.2.0/24"
+        },
+        "after": {
+          "availability_zone": "us-east-1b",
+          "cidr_block": "10.0.2.0/24",
+          "vpc_id": "aws_vpc.production",
+          "tags": { "Name": "Public Subnet 1b" }
+        }
+      }
+    },
+    {
+      "address": "aws_subnet.private_2",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "private_2",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["no-op"],
+        "before": {
+          "cidr_block": "10.0.4.0/24"
+        },
+        "after": {
+          "availability_zone": "us-east-1b",
+          "cidr_block": "10.0.4.0/24",
+          "vpc_id": "aws_vpc.production",
+          "tags": { "Name": "Private Subnet 1b" }
+        }
+      }
+    },
+    {
+      "address": "aws_internet_gateway.gw",
+      "mode": "managed",
+      "type": "aws_internet_gateway",
+      "name": "gw",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "vpc_id": "aws_vpc.production",
+          "tags": { "Name": "production-igw" }
+        }
+      }
+    },
+    {
+      "address": "aws_eks_cluster.prod",
+      "mode": "managed",
+      "type": "aws_eks_cluster",
+      "name": "prod",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "vpc_id": "aws_vpc.production",
+          "tags": { "Name": "production-eks" }
+        }
+      }
+    },
+    {
+      "address": "aws_s3_bucket.legacy_archive",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "legacy_archive",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "bucket": "company-legacy-archive"
+        },
+        "after": null
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_subnet.public_1",
+          "type": "aws_subnet",
+          "name": "public_1",
+          "expressions": {
+            "vpc_id": {
+              "references": ["aws_vpc.production.id"]
+            }
+          }
+        },
+        {
+          "address": "aws_subnet.private_1",
+          "type": "aws_subnet",
+          "name": "private_1",
+          "expressions": {
+            "vpc_id": {
+              "references": ["aws_vpc.production.id"]
+            }
+          }
+        },
+        {
+          "address": "aws_internet_gateway.gw",
+          "type": "aws_internet_gateway",
+          "name": "gw",
+          "expressions": {
+            "vpc_id": {
+              "references": ["aws_vpc.production.id"]
+            }
+          }
+        }
+      ]
+    }
+  }
+}
