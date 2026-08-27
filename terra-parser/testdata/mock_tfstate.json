@@ -1,0 +1,77 @@
+{
+  "version": 4,
+  "terraform_version": "1.7.0",
+  "serial": 12,
+  "lineage": "b78b663b-3bf1-897d-6512-dfef1c0e3c88",
+  "outputs": {},
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+      "instances": [
+        {
+          "schema_version": 1,
+          "attributes": {
+            "cidr_block": "10.0.0.0/16",
+            "enable_dns_hostnames": true,
+            "enable_dns_support": true,
+            "id": "vpc-0123456789abcdef0",
+            "tags": {
+              "Name": "main-vpc"
+            }
+          },
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "public",
+      "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+      "instances": [
+        {
+          "schema_version": 1,
+          "attributes": {
+            "cidr_block": "10.0.1.0/24",
+            "id": "subnet-0123456789abcdef0",
+            "vpc_id": "vpc-0123456789abcdef0",
+            "tags": {
+              "Name": "public-subnet"
+            }
+          },
+          "dependencies": [
+            "aws_vpc.main"
+          ]
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "web",
+      "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+      "instances": [
+        {
+          "schema_version": 1,
+          "attributes": {
+            "ami": "ami-0c55b159cbfafe1f0",
+            "id": "i-0123456789abcdef0",
+            "instance_type": "t2.micro",
+            "subnet_id": "subnet-0123456789abcdef0",
+            "tags": {
+              "Name": "web-server"
+            }
+          },
+          "dependencies": [
+            "aws_subnet.public",
+            "aws_vpc.main"
+          ]
+        }
+      ]
+    }
+  ],
+  "check_results": null
+}

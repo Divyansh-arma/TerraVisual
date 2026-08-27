@@ -1,0 +1,63 @@
+{
+  "version": 4,
+  "terraform_version": "1.7.0",
+  "serial": 20,
+  "lineage": "c89c774d-4cb2-998e-7623-efef2d1f4d99",
+  "outputs": {},
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+      "instances": [
+        {
+          "schema_version": 1,
+          "attributes": {
+            "cidr_block": "10.0.0.0/16",
+            "enable_dns_hostnames": true,
+            "enable_dns_support": true,
+            "id": "vpc-11111111111111111"
+          },
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "public",
+      "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+      "instances": [
+        {
+          "schema_version": 1,
+          "attributes": {
+            "cidr_block": "10.0.1.0/24",
+            "id": "subnet-22222222222222222",
+            "vpc_id": "aws_vpc.main.id"
+          },
+          "dependencies": [
+            "aws_vpc.main"
+          ]
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "legacy",
+      "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+      "instances": [
+        {
+          "schema_version": 1,
+          "attributes": {
+            "ami": "ami-11111111",
+            "id": "i-33333333333333333",
+            "instance_type": "t2.nano"
+          },
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}
