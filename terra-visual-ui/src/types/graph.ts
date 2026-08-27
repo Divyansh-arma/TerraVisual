@@ -1,6 +1,13 @@
 import React from 'react';
 
-export type DriftStatus = 'IN_SYNC' | 'MODIFIED' | 'MISSING_IN_STATE' | 'MISSING_IN_CODE' | 'unknown';
+export type DriftStatus =
+  | 'IN_SYNC'
+  | 'MODIFIED'
+  | 'MISSING_IN_STATE'
+  | 'MISSING_IN_CODE'
+  | 'CREATE'
+  | 'DESTROY'
+  | 'unknown';
 
 export interface Position {
   x: number;
@@ -14,6 +21,12 @@ export interface SecurityIssue {
   description: string;
 }
 
+export interface AttributeDiff {
+  field: string;
+  stateValue: any;
+  codeValue: any;
+}
+
 export interface NodeData extends Record<string, unknown> {
   label: string;
   provider: string;
@@ -24,6 +37,7 @@ export interface NodeData extends Record<string, unknown> {
   driftStatus: DriftStatus;
   attributes?: Record<string, any>;
   securityIssues?: SecurityIssue[];
+  driftDiffs?: AttributeDiff[];
 }
 
 export interface Node {

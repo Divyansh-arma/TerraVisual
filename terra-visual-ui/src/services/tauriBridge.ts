@@ -26,6 +26,18 @@ export async function parseCodeDir(path: string): Promise<GraphResponse> {
 }
 
 /**
+ * Invokes the Tauri backend command parse_plan_file
+ */
+export async function parsePlanFile(path: string): Promise<GraphResponse> {
+  try {
+    const raw = await invoke<string>('parse_plan_file', { path });
+    return JSON.parse(raw) as GraphResponse;
+  } catch (err: any) {
+    throw new Error(typeof err === 'string' ? err : err?.message || 'Failed to parse plan file');
+  }
+}
+
+/**
  * Invokes the Tauri backend command run_drift_analysis
  */
 export async function runDriftAnalysis(statePath: string, codePath: string): Promise<GraphResponse> {

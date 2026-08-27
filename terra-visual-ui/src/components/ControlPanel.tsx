@@ -1,18 +1,21 @@
 import React from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { FileCode2, FolderGit2, RefreshCw, Play, Sparkles, AlertTriangle, FolderOpen } from 'lucide-react';
+import { FileCode2, FolderGit2, RefreshCw, Play, Sparkles, AlertTriangle, FolderOpen, FileSpreadsheet } from 'lucide-react';
 
 interface ControlPanelProps {
   statePath: string;
   setStatePath: (path: string) => void;
   codePath: string;
   setCodePath: (path: string) => void;
+  planPath: string;
+  setPlanPath: (path: string) => void;
   onParseState: () => void;
   onParseCode: () => void;
+  onParsePlan: () => void;
   onRunDrift: () => void;
   isLoading: boolean;
   error: string | null;
-  onSelectPreset: (preset: 'basic' | 'drift') => void;
+  onSelectPreset: (preset: 'basic' | 'drift' | 'plan') => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -20,8 +23,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   setStatePath,
   codePath,
   setCodePath,
+  planPath,
+  setPlanPath,
   onParseState,
   onParseCode,
+  onParsePlan,
   onRunDrift,
   isLoading,
   error,
@@ -59,6 +65,22 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     }
   };
 
+  const handleSelectPlanFile = async () => {
+    try {
+      const selected = await open({
+        filters: [{ name: 'Plan', extensions: ['json'] }],
+      });
+      if (selected) {
+        const path = Array.isArray(selected) ? selected[0] : selected;
+        if (path) setPlanPath(path);
+      }
+    } catch (err) {
+      console.error('Failed to open native plan file dialog:', err);
+      const entered = window.prompt('Enter absolute path to tfplan.json:');
+      if (entered) setPlanPath(entered);
+    }
+  };
+
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl backdrop-blur">
       <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
@@ -68,7 +90,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             Infrastructure Control Panel
           </h2>
           <p className="text-xs text-slate-400">
-            Ingest local Terraform state or HCL code to generate graph engine nodes & edges
+            Ingest local Terraform state, plan diffs, or HCL code to generate visual topology
           </p>
         </div>
 
@@ -80,7 +102,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             onClick={() => onSelectPreset('basic')}
             className="px-2.5 py-1 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition"
           >
-            Basic AWS VPC / Subnet
+            Basic AWS VPC
           </button>
           <button
             type="button"
@@ -89,15 +111,22 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           >
             Drift Scenario
           </button>
+          <button
+            type="button"
+            onClick={() => onSelectPreset('plan')}
+            className="px-2.5 py-1 text-xs font-medium bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/60 rounded-lg transition"
+          >
+            Plan (tfplan.json)
+          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 my-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-4">
         {/* State File Path */}
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
             <FileCode2 className="w-4 h-4 text-emerald-400" />
-            Terraform State File (.tfstate / .json)
+            State File (.tfstate)
           </label>
           <div className="flex gap-2">
             <input
@@ -110,10 +139,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <button
               type="button"
               onClick={handleSelectStateFile}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition whitespace-nowrap"
+              className="flex items-center gap-1 px-2.5 py-2 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition shrink-0"
+              title="Select State File"
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              Select State File
             </button>
           </div>
         </div>
@@ -122,7 +151,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
             <FolderGit2 className="w-4 h-4 text-sky-400" />
-            Terraform HCL Code Directory (.tf)
+            HCL Directory (.tf)
           </label>
           <div className="flex gap-2">
             <input
@@ -135,10 +164,35 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <button
               type="button"
               onClick={handleSelectCodeDirectory}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition whitespace-nowrap"
+              className="flex items-center gap-1 px-2.5 py-2 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition shrink-0"
+              title="Select Code Directory"
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              Select Code Directory
+            </button>
+          </div>
+        </div>
+
+        {/* Plan File Path */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+            <FileSpreadsheet className="w-4 h-4 text-amber-400" />
+            Plan File (tfplan.json)
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={planPath}
+              onChange={(e) => setPlanPath(e.target.value)}
+              placeholder="/path/to/tfplan.json"
+              className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500 transition"
+            />
+            <button
+              type="button"
+              onClick={handleSelectPlanFile}
+              className="flex items-center gap-1 px-2.5 py-2 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition shrink-0"
+              title="Select Plan JSON File"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -164,6 +218,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         >
           {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
           <span>{isLoading ? 'Parsing HCL...' : 'Parse HCL Code'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onParsePlan}
+          disabled={isLoading || !planPath}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition shadow-lg shadow-amber-950"
+        >
+          {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+          <span>{isLoading ? 'Parsing Plan...' : 'Parse Plan (tfplan.json)'}</span>
         </button>
 
         <button

@@ -12,10 +12,14 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ graph }) => {
   const totalNodes = graph.nodes.length;
   const totalEdges = graph.edges.length;
 
-  const inSyncCount = graph.nodes.filter(n => n.data.driftStatus === 'IN_SYNC').length;
-  const modifiedCount = graph.nodes.filter(n => n.data.driftStatus === 'MODIFIED').length;
-  const missingInStateCount = graph.nodes.filter(n => n.data.driftStatus === 'MISSING_IN_STATE').length;
-  const missingInCodeCount = graph.nodes.filter(n => n.data.driftStatus === 'MISSING_IN_CODE').length;
+  const toCreateCount = graph.nodes.filter(
+    (n) => n.data.driftStatus === 'CREATE' || n.data.driftStatus === 'MISSING_IN_STATE'
+  ).length;
+  const modifiedCount = graph.nodes.filter((n) => n.data.driftStatus === 'MODIFIED').length;
+  const toDestroyCount = graph.nodes.filter(
+    (n) => n.data.driftStatus === 'DESTROY' || n.data.driftStatus === 'MISSING_IN_CODE'
+  ).length;
+  const inSyncCount = graph.nodes.filter((n) => n.data.driftStatus === 'IN_SYNC').length;
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -41,11 +45,11 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ graph }) => {
 
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
         <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg">
-          <CheckCircle2 className="w-5 h-5" />
+          <PlusCircle className="w-5 h-5" />
         </div>
         <div>
-          <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">In Sync</div>
-          <div className="text-xl font-bold text-emerald-400">{inSyncCount}</div>
+          <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">To Create</div>
+          <div className="text-xl font-bold text-emerald-400">{toCreateCount}</div>
         </div>
       </div>
 
@@ -60,22 +64,22 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ graph }) => {
       </div>
 
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
-        <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
-          <PlusCircle className="w-5 h-5" />
-        </div>
-        <div>
-          <div className="text-xs text-slate-400 font-medium uppercase tracking-wider leading-tight">No State</div>
-          <div className="text-xl font-bold text-blue-400">{missingInStateCount}</div>
-        </div>
-      </div>
-
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
         <div className="p-2 bg-rose-500/10 text-rose-400 rounded-lg">
           <MinusCircle className="w-5 h-5" />
         </div>
         <div>
-          <div className="text-xs text-slate-400 font-medium uppercase tracking-wider leading-tight">No Code</div>
-          <div className="text-xl font-bold text-rose-400">{missingInCodeCount}</div>
+          <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">To Destroy</div>
+          <div className="text-xl font-bold text-rose-400">{toDestroyCount}</div>
+        </div>
+      </div>
+
+      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
+        <div className="p-2 bg-cyan-500/10 text-cyan-400 rounded-lg">
+          <CheckCircle2 className="w-5 h-5" />
+        </div>
+        <div>
+          <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">In Sync</div>
+          <div className="text-xl font-bold text-cyan-400">{inSyncCount}</div>
         </div>
       </div>
     </div>
